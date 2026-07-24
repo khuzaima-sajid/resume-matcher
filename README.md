@@ -6,12 +6,12 @@ an LLM with strict JSON output.
 
 ## Tech Stack
 
-| Layer     | Technology                          |
-|-----------|--------------------------------------|
-| Frontend  | Next.js 14 (App Router) + Tailwind CSS |
-| Backend   | FastAPI (Python)                     |
-| LLM       | Claude (Anthropic API)               |
-| File parsing | pypdf, python-docx                |
+| Layer     | Technology                            |
+|-----------|-------------------------------------- |
+| Frontend  | Next.js 14 (App Router) + Tailwind CSS|
+| Backend   | FastAPI (Python)                      |
+| LLM       | Claude(Code)+Gemini (Anthropic API)   |
+| File parsing | pypdf, python-docx                 |
 
 ## Features
 
@@ -79,17 +79,6 @@ and paste it into `backend/.env` as `ANTHROPIC_API_KEY`.
 5. The validated JSON (`match_score`, `missing_keywords`, `suggestions`) is
    returned to the frontend and rendered.
 
-## Team Roles
-
-| Name | Role | Responsibility |
-|------|------|-----------------|
-| _Member 1_ | Backend Lead | FastAPI, file extraction, LLM integration |
-| _Member 2_ | Frontend Lead | Next.js UI, results rendering |
-| _Member 3_ | Prompt Engineer | Prompt template, JSON validation & retry logic |
-| _Member 4_ | QA / Docs | Testing, README, screenshots |
-| _Member 5_ | DevOps / PM | Branching strategy, PR reviews, GitHub setup |
-
-*(Fill in real names before submission.)*
 
 ## Common Blockers & Fixes
 
