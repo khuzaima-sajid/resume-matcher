@@ -13,13 +13,19 @@ import io
 import json
 import os
 
+from anthropic import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    Anthropic,
+    RateLimitError,
+)
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from pypdf import PdfReader
 from docx import Document
-from google import genai
 
 load_dotenv()
 
@@ -37,8 +43,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
+client = Anthropic(
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
+    timeout=LLM_TIMEOUT_SECONDS,
+)
+MODEL_NAME = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 
 
 # ---------------------------------------------------------------------------
@@ -124,20 +134,51 @@ def call_llm_for_json(resume_text: str, job_description: str) -> dict:
     model to fix its own output if it wasn't valid JSON the first time."""
 
     def _call(extra_instruction: str = "") -> str:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=build_user_prompt(resume_text, job_description),
-            config={
-                "system_instruction": SYSTEM_PROMPT + extra_instruction,
-                "max_output_tokens": 1500,
-                "response_mime_type": "application/json",
-            },
-        )
-        return response.text
+        try:
+            response = client.messages.create(
+                model=MODEL_NAME,
+                system=SYSTEM_PROMPT + extra_instruction,
+                max_tokens=1500,
+                messages=[
+                    {"role": "user", "content": build_user_prompt(resume_text, job_description)}
+                ],
+            )
+            text_parts = [
+                block.text for block in response.content if getattr(block, "type", None) == "text"
+            ]
+            return "".join(text_parts).strip()
+        except RateLimitError:
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit reached from the LLM provider. Please retry shortly.",
+            )
+        except APITimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail=(
+                    "LLM request timed out. Try again or increase LLM_TIMEOUT_SECONDS in "
+                    "backend/.env."
+                ),
+            )
+        except APIConnectionError:
+            raise HTTPException(
+                status_code=503,
+                detail="Unable to reach the LLM provider. Please try again.",
+            )
+        except APIStatusError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"LLM provider returned an error (status {e.status_code}).",
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Unexpected LLM provider error: {type(e).__name__}",
+            )
 
     raw = _call()
     try:
-        return json.loads(_strip_code_fences(raw))
+        return _parse_llm_json(raw)
     except json.JSONDecodeError:
         # Retry once, telling the model exactly what went wrong
         raw_retry = _call(
@@ -145,12 +186,16 @@ def call_llm_for_json(resume_text: str, job_description: str) -> dict:
             "Respond with ONLY the raw JSON object, nothing else."
         )
         try:
-            return json.loads(_strip_code_fences(raw_retry))
+            return _parse_llm_json(raw_retry)
         except json.JSONDecodeError as e:
             raise HTTPException(
                 status_code=502,
                 detail=f"LLM did not return valid JSON after retry: {e}",
             )
+        except ValueError as e:
+            raise HTTPException(status_code=502, detail=f"Malformed LLM response: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=f"Malformed LLM response: {e}")
 
 
 def _strip_code_fences(text: str) -> str:
@@ -160,6 +205,17 @@ def _strip_code_fences(text: str) -> str:
         if text.startswith("json"):
             text = text[4:]
     return text.strip()
+
+
+def _parse_llm_json(raw_text: str) -> dict:
+    parsed = json.loads(_strip_code_fences(raw_text))
+    if not isinstance(parsed, dict):
+        raise ValueError("Response must be a JSON object.")
+    required_keys = {"match_score", "missing_keywords", "suggestions"}
+    missing_keys = required_keys - set(parsed.keys())
+    if missing_keys:
+        raise ValueError(f"Missing required keys: {', '.join(sorted(missing_keys))}")
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -181,18 +237,24 @@ async def analyze(
     file_bytes = await resume.read()
     resume_text = extract_resume_text(resume.filename, file_bytes)
 
-    if not os.getenv("GEMINI_API_KEY"):
+    if not os.getenv("ANTHROPIC_API_KEY"):
         raise HTTPException(
             status_code=500,
-            detail="Server is missing GEMINI_API_KEY. Add it to backend/.env",
+            detail="Server is missing ANTHROPIC_API_KEY. Add it to backend/.env",
         )
 
     result = call_llm_for_json(resume_text, job_description)
 
     # Validate against schema before returning (raises 500 if the model's
     # JSON is well-formed but doesn't match our expected shape)
-    validated = MatchResult(**result)
-    return validated
+    try:
+        validated = MatchResult(**result)
+        return validated
+    except ValidationError:
+        raise HTTPException(
+            status_code=502,
+            detail="LLM response JSON did not match the expected schema.",
+        )
 
 
 if __name__ == "__main__":
