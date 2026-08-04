@@ -66,6 +66,13 @@ export default function Home() {
       }
 
       const data: MatchResult = await res.json();
+      if (
+        typeof data?.match_score !== "number" ||
+        !Array.isArray(data?.missing_keywords) ||
+        !Array.isArray(data?.suggestions)
+      ) {
+        throw new Error("Backend returned an unexpected response format.");
+      }
       setResult(data);
     } catch (e: any) {
       setError(e.message || "Failed to analyze. Is the backend running?");
@@ -164,6 +171,11 @@ export default function Home() {
         >
           {loading ? "Analyzing..." : "Analyze Match"}
         </button>
+        {loading && (
+          <p className="text-center text-sm text-slate-500">
+            Processing your resume on the backend. This can take up to ~30 seconds.
+          </p>
+        )}
       </div>
 
       {/* Results */}

@@ -10,7 +10,7 @@ an LLM with strict JSON output.
 |-----------|-------------------------------------- |
 | Frontend  | Next.js 14 (App Router) + Tailwind CSS|
 | Backend   | FastAPI (Python)                      |
-| LLM       | Claude(Code)+Gemini (Anthropic API)   |
+| LLM       | Claude (Anthropic API)                |
 | File parsing | pypdf, python-docx                 |
 
 ## Features
@@ -47,6 +47,7 @@ source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
 # Edit .env and paste your ANTHROPIC_API_KEY
+# Optional: tune LLM_TIMEOUT_SECONDS (default 30)
 uvicorn main:app --reload
 ```
 
